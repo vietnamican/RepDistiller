@@ -13,11 +13,11 @@ def init(model_s, model_t, init_modules, criterion, train_loader, logger, opt):
     model_s.eval()
     init_modules.train()
 
-    if torch.cuda.is_available():
-        model_s.cuda()
-        model_t.cuda()
-        init_modules.cuda()
-        cudnn.benchmark = True
+    # if torch.cuda.is_available():
+    model_s.to(opt.device)
+    model_t.to(opt.device)
+    init_modules.to(opt.device)
+    cudnn.benchmark = True
 
     if opt.model_s in ['resnet8', 'resnet14', 'resnet20', 'resnet32', 'resnet44', 'resnet56', 'resnet110',
                        'resnet8x4', 'resnet32x4', 'wrn_16_1', 'wrn_16_2', 'wrn_40_1', 'wrn_40_2'] and \
@@ -46,12 +46,12 @@ def init(model_s, model_t, init_modules, criterion, train_loader, logger, opt):
             data_time.update(time.time() - end)
 
             input = input.float()
-            if torch.cuda.is_available():
-                input = input.cuda()
-                target = target.cuda()
-                index = index.cuda()
-                if opt.distill in ['crd']:
-                    contrast_idx = contrast_idx.cuda()
+            # if torch.cuda.is_available():
+            input = input.to(opt.device)
+            target = target.to(opt.device)
+            index = index.to(opt.device)
+            if opt.distill in ['crd']:
+                contrast_idx = contrast_idx.to(opt.device)
 
             # ============= forward ==============
             preact = (opt.distill == 'abound')

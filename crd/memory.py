@@ -7,12 +7,12 @@ class ContrastMemory(nn.Module):
     """
     memory buffer that supplies large amount of negative samples.
     """
-    def __init__(self, inputSize, outputSize, K, T=0.07, momentum=0.5):
+    def __init__(self, inputSize, outputSize, K, T=0.07, momentum=0.5, device='cuda'):
         super(ContrastMemory, self).__init__()
         self.nLem = outputSize
         self.unigrams = torch.ones(self.nLem)
         self.multinomial = AliasMethod(self.unigrams)
-        self.multinomial.cuda()
+        self.multinomial.to(device)
         self.K = K
 
         self.register_buffer('params', torch.tensor([K, T, -1, -1, momentum]))
@@ -120,9 +120,9 @@ class AliasMethod(object):
         for last_one in smaller+larger:
             self.prob[last_one] = 1
 
-    def cuda(self):
-        self.prob = self.prob.cuda()
-        self.alias = self.alias.cuda()
+    def to(self, device):
+        self.prob = self.prob.to(device)
+        self.alias = self.alias.to(device)
 
     def draw(self, N):
         """ Draw N samples from multinomial """

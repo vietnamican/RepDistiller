@@ -22,9 +22,9 @@ def train_vanilla(epoch, train_loader, model, criterion, optimizer, opt):
         data_time.update(time.time() - end)
 
         input = input.float()
-        if torch.cuda.is_available():
-            input = input.cuda()
-            target = target.cuda()
+        # if torch.cuda.is_available():
+        input = input.to(opt.device)
+        target = target.to(opt.device)
 
         # ===================forward=====================
         output = model(input)
@@ -93,19 +93,19 @@ def train_distill(epoch, train_loader, module_list, criterion_list, optimizer, o
 
     end = time.time()
     for idx, data in enumerate(train_loader):
-        if opt.distill in ['crd']:
+        if opt.distill in ['crd', 'crcd']:
             input, target, index, contrast_idx = data
         else:
             input, target, index = data
         data_time.update(time.time() - end)
 
         input = input.float()
-        if torch.cuda.is_available():
-            input = input.cuda()
-            target = target.cuda()
-            index = index.cuda()
-            if opt.distill in ['crd']:
-                contrast_idx = contrast_idx.cuda()
+        # if torch.cuda.is_available():
+        input = input.to(opt.device)
+        target = target.to(opt.device)
+        index = index.to(opt.device)
+        if opt.distill in ['crd', 'crcd']:
+            contrast_idx = contrast_idx.to(opt.device)
 
         # ===================forward=====================
         preact = False
@@ -128,6 +128,10 @@ def train_distill(epoch, train_loader, module_list, criterion_list, optimizer, o
             f_t = feat_t[opt.hint_layer]
             loss_kd = criterion_kd(f_s, f_t)
         elif opt.distill == 'crd':
+            f_s = feat_s[-1]
+            f_t = feat_t[-1]
+            loss_kd = criterion_kd(f_s, f_t, index, contrast_idx)
+        elif opt.distill == 'crcd':
             f_s = feat_s[-1]
             f_t = feat_t[-1]
             loss_kd = criterion_kd(f_s, f_t, index, contrast_idx)
@@ -230,9 +234,9 @@ def validate(val_loader, model, criterion, opt):
         for idx, (input, target) in enumerate(val_loader):
 
             input = input.float()
-            if torch.cuda.is_available():
-                input = input.cuda()
-                target = target.cuda()
+            # if torch.cuda.is_available():
+            input = input.to(opt.device)
+            target = target.to(opt.device)
 
             # compute output
             output = model(input)

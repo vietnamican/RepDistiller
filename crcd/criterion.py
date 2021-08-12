@@ -1,11 +1,11 @@
 import torch
 from torch import nn
-from .memory import ContrastMemory
+from .memory import ContrastMemory, Contrast, Memory, RelationMemory
 
 eps = 1e-7
 
 
-class CRDLoss(nn.Module):
+class CRCDLoss(nn.Module):
     """CRD Loss function
     includes two symmetric parts:
     (a) using teacher as anchor, choose positive and negatives over the student side
@@ -21,12 +21,12 @@ class CRDLoss(nn.Module):
         opt.n_data: the number of samples in the training set, therefor the memory buffer is: opt.n_data x opt.feat_dim
     """
     def __init__(self, opt):
-        super(CRDLoss, self).__init__()
-        self.embed_s = Embed(opt.s_dim, opt.feat_dim)
-        self.embed_t = Embed(opt.t_dim, opt.feat_dim)
-        self.contrast = ContrastMemory(opt.feat_dim, opt.n_data, opt.nce_k, opt.nce_t, opt.nce_m, opt.device)
-        self.criterion_t = ContrastLoss(opt.n_data)
-        self.criterion_s = ContrastLoss(opt.n_data)
+        super(CRCDLoss, self).__init__()
+        self.relation = RelationMemory(opt.s_dim, opt.t_dim, opt.feat_dim, opt.n_data, opt.nce_k, opt.nce_m, opt.device)
+        self.embed_m_t = Embed(opt.feat_dim, opt.feat_dim)
+        self.embed_m_t_s = Embed(opt.feat_dim, opt.feat_dim)
+        self.contrast = Contrast(opt.nce_t)
+        self.criterion = ContrastLoss(opt.n_data)
 
     def forward(self, f_s, f_t, idx, contrast_idx=None):
         """
@@ -39,12 +39,11 @@ class CRDLoss(nn.Module):
         Returns:
             The contrastive loss
         """
-        f_s = self.embed_s(f_s)
-        f_t = self.embed_t(f_t)
-        out_s, out_t = self.contrast(f_s, f_t, idx, contrast_idx)
-        s_loss = self.criterion_s(out_s)
-        t_loss = self.criterion_t(out_t)
-        loss = s_loss + t_loss
+        outs_m_t, outs_m_t_s = self.relation(f_s, f_t, idx, contrast_idx)
+        outs_m_t = torch.cat([self.embed_m_t(out_m_t).unsqueeze(1) for out_m_t in outs_m_t], dim=1)
+        outs_m_t_s = torch.cat([self.embed_m_t(out_m_t_s).unsqueeze(1) for out_m_t_s in outs_m_t_s], dim=1)
+        outs = self.contrast(outs_m_t, outs_m_t_s)
+        loss = self.criterion(outs)
         return loss
 
 
@@ -57,6 +56,7 @@ class ContrastLoss(nn.Module):
         self.n_data = n_data
 
     def forward(self, x):
+        x = x.unsqueeze(2)
         bsz = x.shape[0]
         m = x.size(1) - 1
 
@@ -70,7 +70,6 @@ class ContrastLoss(nn.Module):
         # loss for K negative pair
         P_neg = x.narrow(1, 1, m)
         log_D0 = torch.div(P_neg.clone().fill_(m * Pn), P_neg.add(m * Pn + eps)).log_()
-
         loss = - (log_D1.sum(0) + log_D0.view(-1, 1).sum(0)) / bsz
 
         return loss

@@ -6,7 +6,6 @@ from __future__ import print_function
 
 import os
 import argparse
-import socket
 import time
 
 import tensorboard_logger as tb_logger
@@ -27,14 +26,12 @@ from helper.util import adjust_learning_rate
 from distiller_zoo import DistillKL, HintLoss, Attention, Similarity, Correlation, VIDLoss, RKDLoss
 from distiller_zoo import PKT, ABLoss, FactorTransfer, KDSVD, FSP, NSTLoss
 from crd.criterion import CRDLoss
+from crcd.criterion import CRCDLoss
 
 from helper.loops import train_distill as train, validate
 from helper.pretrain import init
 
-
 def parse_option():
-
-    hostname = socket.gethostname()
 
     parser = argparse.ArgumentParser('argument for training')
 
@@ -45,6 +42,7 @@ def parse_option():
     parser.add_argument('--num_workers', type=int, default=8, help='num of workers to use')
     parser.add_argument('--epochs', type=int, default=240, help='number of training epochs')
     parser.add_argument('--init_epochs', type=int, default=30, help='init training for two-stage methods')
+    parser.add_argument('--device', type=str, default='cuda:1', help='device where training process in')
 
     # optimization
     parser.add_argument('--learning_rate', type=float, default=0.05, help='learning rate')
@@ -66,7 +64,7 @@ def parse_option():
 
     # distillation
     parser.add_argument('--distill', type=str, default='kd', choices=['kd', 'hint', 'attention', 'similarity',
-                                                                      'correlation', 'vid', 'crd', 'kdsvd', 'fsp',
+                                                                      'correlation', 'vid', 'crd', 'crcd', 'kdsvd', 'fsp',
                                                                       'rkd', 'pkt', 'abound', 'factor', 'nst'])
     parser.add_argument('--trial', type=str, default='1', help='trial id')
 
@@ -94,12 +92,8 @@ def parse_option():
         opt.learning_rate = 0.01
 
     # set the path according to the environment
-    if hostname.startswith('visiongpu'):
-        opt.model_path = '/path/to/my/student_model'
-        opt.tb_path = '/path/to/my/student_tensorboards'
-    else:
-        opt.model_path = './save/student_model'
-        opt.tb_path = './save/student_tensorboards'
+    opt.model_path = './save/student_model'
+    opt.tb_path = './save/student_tensorboards'
 
     iterations = opt.lr_decay_epochs.split(',')
     opt.lr_decay_epochs = list([])
@@ -131,11 +125,11 @@ def get_teacher_name(model_path):
         return segments[0] + '_' + segments[1] + '_' + segments[2]
 
 
-def load_teacher(model_path, n_cls):
+def load_teacher(model_path, n_cls, device):
     print('==> loading teacher model')
     model_t = get_teacher_name(model_path)
     model = model_dict[model_t](num_classes=n_cls)
-    model.load_state_dict(torch.load(model_path)['model'])
+    model.load_state_dict(torch.load(model_path, map_location=device)['model'])
     print('==> done')
     return model
 
@@ -150,7 +144,7 @@ def main():
 
     # dataloader
     if opt.dataset == 'cifar100':
-        if opt.distill in ['crd']:
+        if opt.distill in ['crd', 'crcd']:
             train_loader, val_loader, n_data = get_cifar100_dataloaders_sample(batch_size=opt.batch_size,
                                                                                num_workers=opt.num_workers,
                                                                                k=opt.nce_k,
@@ -164,7 +158,7 @@ def main():
         raise NotImplementedError(opt.dataset)
 
     # model
-    model_t = load_teacher(opt.path_t, n_cls)
+    model_t = load_teacher(opt.path_t, n_cls, opt.device)
     model_s = model_dict[opt.model_s](num_classes=n_cls)
 
     data = torch.randn(2, 3, 32, 32)
@@ -196,6 +190,23 @@ def main():
         module_list.append(criterion_kd.embed_t)
         trainable_list.append(criterion_kd.embed_s)
         trainable_list.append(criterion_kd.embed_t)
+    elif opt.distill == 'crcd':
+        opt.s_dim = feat_s[-1].shape[1]
+        opt.t_dim = feat_t[-1].shape[1]
+        opt.n_data = n_data
+        criterion_kd = CRCDLoss(opt)
+        module_list.append(criterion_kd.relation.w_s_v1)
+        module_list.append(criterion_kd.relation.w_s_v2)
+        module_list.append(criterion_kd.relation.w_s_v)
+        module_list.append(criterion_kd.relation.w_t_v1)
+        module_list.append(criterion_kd.relation.w_t_v2)
+        module_list.append(criterion_kd.relation.w_t_v)
+        trainable_list.append(criterion_kd.relation.w_s_v1)
+        trainable_list.append(criterion_kd.relation.w_s_v2)
+        trainable_list.append(criterion_kd.relation.w_s_v)
+        trainable_list.append(criterion_kd.relation.w_t_v1)
+        trainable_list.append(criterion_kd.relation.w_t_v2)
+        trainable_list.append(criterion_kd.relation.w_t_v)
     elif opt.distill == 'attention':
         criterion_kd = Attention()
     elif opt.distill == 'nst':
@@ -278,10 +289,10 @@ def main():
     # append teacher after optimizer to avoid weight_decay
     module_list.append(model_t)
 
-    if torch.cuda.is_available():
-        module_list.cuda()
-        criterion_list.cuda()
-        cudnn.benchmark = True
+    # if torch.cuda.is_available():
+    module_list.to(opt.device)
+    criterion_list.to(opt.device)
+    cudnn.benchmark = True
 
     # validate teacher accuracy
     teacher_acc, _, _ = validate(val_loader, model_t, criterion_cls, opt)
