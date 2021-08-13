@@ -1,6 +1,6 @@
 import torch
 from torch import nn
-from .utils import RelationMemory, Normalize
+from .memory import ContrastMemory, Contrast, Memory, RelationMemory
 
 eps = 1e-7
 
@@ -19,12 +19,13 @@ class CRCDLoss(nn.Module):
         opt.nce_t: the temperature
         opt.nce_m: the momentum for updating the memory buffer
         opt.n_data: the number of samples in the training set, therefor the memory buffer is: opt.n_data x opt.feat_dim
-        opt.device: device where training progress occurs is
     """
     def __init__(self, opt):
         super(CRCDLoss, self).__init__()
-        self.normalize = Normalize()
-        self.relation = RelationMemory(opt.s_dim, opt.t_dim, opt.feat_dim, opt.n_data, opt.nce_k, opt.nce_t, opt.nce_m, opt.device)
+        self.relation = RelationMemory(opt.s_dim, opt.t_dim, opt.feat_dim, opt.n_data, opt.nce_k, opt.nce_m, opt.device)
+        self.embed_m_t = Embed(opt.feat_dim, opt.feat_dim)
+        self.embed_m_t_s = Embed(opt.feat_dim, opt.feat_dim)
+        self.contrast = Contrast(opt.nce_t)
         self.criterion = ContrastLoss(opt.n_data)
 
     def forward(self, f_s, f_t, idx, contrast_idx=None):
@@ -38,9 +39,11 @@ class CRCDLoss(nn.Module):
         Returns:
             The contrastive loss
         """
-        f_s, f_t = self.normalize(f_s), self.normalize(f_t)
-        out = self.relation(f_s, f_t, idx, contrast_idx)
-        loss = self.criterion(out)
+        outs_m_t, outs_m_t_s = self.relation(f_s, f_t, idx, contrast_idx)
+        outs_m_t = torch.cat([self.embed_m_t(out_m_t).unsqueeze(1) for out_m_t in outs_m_t], dim=1)
+        outs_m_t_s = torch.cat([self.embed_m_t(out_m_t_s).unsqueeze(1) for out_m_t_s in outs_m_t_s], dim=1)
+        outs = self.contrast(outs_m_t, outs_m_t_s)
+        loss = self.criterion(outs)
         return loss
 
 
@@ -53,6 +56,7 @@ class ContrastLoss(nn.Module):
         self.n_data = n_data
 
     def forward(self, x):
+        x = x.unsqueeze(2)
         bsz = x.shape[0]
         m = x.size(1) - 1
 
@@ -69,3 +73,29 @@ class ContrastLoss(nn.Module):
         loss = - (log_D1.sum(0) + log_D0.view(-1, 1).sum(0)) / bsz
 
         return loss
+
+
+class Embed(nn.Module):
+    """Embedding module"""
+    def __init__(self, dim_in=1024, dim_out=128):
+        super(Embed, self).__init__()
+        self.linear = nn.Linear(dim_in, dim_out)
+        self.l2norm = Normalize(2)
+
+    def forward(self, x):
+        x = x.view(x.shape[0], -1)
+        x = self.linear(x)
+        x = self.l2norm(x)
+        return x
+
+
+class Normalize(nn.Module):
+    """normalization layer"""
+    def __init__(self, power=2):
+        super(Normalize, self).__init__()
+        self.power = power
+
+    def forward(self, x):
+        norm = x.pow(self.power).sum(1, keepdim=True).pow(1. / self.power)
+        out = x.div(norm)
+        return out

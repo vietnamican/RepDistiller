@@ -48,7 +48,7 @@ def parse_option():
     parser.add_argument('--learning_rate', type=float, default=0.05, help='learning rate')
     parser.add_argument('--lr_decay_epochs', type=str, default='150,180,210', help='where to decay lr, can be a list')
     parser.add_argument('--lr_decay_rate', type=float, default=0.1, help='decay rate for learning rate')
-    parser.add_argument('--weight_decay', type=float, default=5e-4, help='weight decay')
+    parser.add_argument('--weight_decay', type=float, default=1e-4, help='weight decay')
     parser.add_argument('--momentum', type=float, default=0.9, help='momentum')
 
     # dataset
@@ -78,8 +78,8 @@ def parse_option():
     # NCE distillation
     parser.add_argument('--feat_dim', default=128, type=int, help='feature dimension')
     parser.add_argument('--mode', default='exact', type=str, choices=['exact', 'relax'])
-    parser.add_argument('--nce_k', default=16384, type=int, help='number of negative samples for NCE')
-    parser.add_argument('--nce_t', default=0.07, type=float, help='temperature parameter for softmax')
+    parser.add_argument('--nce_k', default=511, type=int, help='number of negative samples for NCE')
+    parser.add_argument('--nce_t', default=0.05, type=float, help='temperature parameter for softmax')
     parser.add_argument('--nce_m', default=0.5, type=float, help='momentum for non-parametric updates')
 
     # hint layer
@@ -195,18 +195,14 @@ def main():
         opt.t_dim = feat_t[-1].shape[1]
         opt.n_data = n_data
         criterion_kd = CRCDLoss(opt)
-        module_list.append(criterion_kd.relation.w_s_v1)
-        module_list.append(criterion_kd.relation.w_s_v2)
-        module_list.append(criterion_kd.relation.w_s_v)
-        module_list.append(criterion_kd.relation.w_t_v1)
-        module_list.append(criterion_kd.relation.w_t_v2)
-        module_list.append(criterion_kd.relation.w_t_v)
-        trainable_list.append(criterion_kd.relation.w_s_v1)
-        trainable_list.append(criterion_kd.relation.w_s_v2)
-        trainable_list.append(criterion_kd.relation.w_s_v)
-        trainable_list.append(criterion_kd.relation.w_t_v1)
-        trainable_list.append(criterion_kd.relation.w_t_v2)
-        trainable_list.append(criterion_kd.relation.w_t_v)
+        module_list.append(criterion_kd.relation.m_t)
+        module_list.append(criterion_kd.relation.m_t_s)
+        module_list.append(criterion_kd.relation.h_t)
+        module_list.append(criterion_kd.relation.h_t_s)
+        trainable_list.append(criterion_kd.relation.m_t)
+        trainable_list.append(criterion_kd.relation.m_t_s)
+        trainable_list.append(criterion_kd.relation.h_t)
+        trainable_list.append(criterion_kd.relation.h_t_s)
     elif opt.distill == 'attention':
         criterion_kd = Attention()
     elif opt.distill == 'nst':

@@ -32,7 +32,7 @@
 # python train_student.py --path_t ./save/models/resnet32x4_vanilla/ckpt_epoch_240.pth --distill crd --model_s resnet8x4 -a 1 -b 0.8 --trial 1
 
 # CRCD wrn-40-2 wrn-16-2
-python train_student.py --path_t ./save/models/wrn_40_2_cifar100_lr_0.05_decay_0.0005_trial_0/ckpt_epoch_240.pth --distill crd --model_s wrn_16_2 -a 1 -b 0.5 --trial 2
+python train_student.py --path_t ./save/models/wrn_40_2_cifar100_lr_0.05_decay_0.0005_trial_0/ckpt_epoch_240.pth --distill crcd --model_s wrn_16_2 -a 1 -b 0.5 --trial 0
 
 # # CRCD wrn-40-2 wrn-40-1
 # python train_student.py --path_t ./save/models/wrn_40_2_cifar100_lr_0.05_decay_0.0005_trial_0/ckpt_epoch_240.pth --distill crcd --model_s wrn_40_1 -a 1 -b 0.5
