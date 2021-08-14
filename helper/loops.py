@@ -93,7 +93,7 @@ def train_distill(epoch, train_loader, module_list, criterion_list, optimizer, o
 
     end = time.time()
     for idx, data in enumerate(train_loader):
-        if opt.distill in ['crd', 'crcd']:
+        if opt.distill in ['crd', 'crcd', 'crcd_simple']:
             input, target, index, contrast_idx = data
         else:
             input, target, index = data
@@ -104,7 +104,7 @@ def train_distill(epoch, train_loader, module_list, criterion_list, optimizer, o
         input = input.to(opt.device)
         target = target.to(opt.device)
         index = index.to(opt.device)
-        if opt.distill in ['crd', 'crcd']:
+        if opt.distill in ['crd', 'crcd', 'crcd_simple']:
             contrast_idx = contrast_idx.to(opt.device)
 
         # ===================forward=====================
@@ -132,6 +132,10 @@ def train_distill(epoch, train_loader, module_list, criterion_list, optimizer, o
             f_t = feat_t[-1]
             loss_kd = criterion_kd(f_s, f_t, index, contrast_idx)
         elif opt.distill == 'crcd':
+            f_s = feat_s[-1]
+            f_t = feat_t[-1]
+            loss_kd = criterion_kd(f_s, f_t, index, contrast_idx)
+        elif opt.distill == 'crcd_simple':
             f_s = feat_s[-1]
             f_t = feat_t[-1]
             loss_kd = criterion_kd(f_s, f_t, index, contrast_idx)

@@ -1,71 +1,96 @@
 import torch
 from torch import nn
+from torch.nn import functional as F
 import math
 
 class RelationMemory(nn.Module):
-    def __init__(self, dim_s, dim_t, inputSize, outputSize, K, T, momentum=0.5, device='cuda'):
+    def __init__(self, dim_s, dim_t, input_size, output_size, K, T, momentum=0.5, device='cuda'):
         super(RelationMemory, self).__init__()
-        # M_T, M_T_S
-        self.m_t = Synchronize(dim_t, dim_t, inputSize)
-        self.m_t_s = Synchronize(dim_s, dim_t, inputSize)
+        self.embed_s = nn.Linear(dim_s, input_size)
+        self.embed_t = nn.Linear(dim_t, input_size)
+        self.m_t_v = nn.Linear(input_size, input_size)
+        self.m_t_q = nn.Linear(input_size, input_size)
+        self.m_t_s_v = nn.Linear(input_size, input_size)
+        self.m_t_s_q = nn.Linear(input_size, input_size)
+        self.m_t = nn.Linear(input_size, input_size)
+        self.m_t_s = nn.Linear(input_size, input_size)
+        # # M_T, M_T_S
+        # self.m_t = Synchronize(dim_t, dim_t, input_size)
+        # self.m_t_s = Synchronize(dim_s, dim_t, input_size)
         # critic
-        self.h_t = Embed(inputSize, inputSize)
-        self.h_t_s = Embed(inputSize, inputSize)
+        self.h_t = Embed(input_size, input_size)
+        self.h_t_s = Embed(input_size, input_size)
         # memory
-        self.inputSize = inputSize
-        self.nLem = outputSize
+        self.input_size = input_size
+        self.nLem = output_size
         self.unigrams = torch.ones(self.nLem)
         self.multinomial = AliasMethod(self.unigrams)
         self.multinomial.to(device)
         self.register_buffer('params', torch.tensor([K, T, momentum]))
-        stdv = 1. / math.sqrt(inputSize / 3)
-        self.register_buffer('memory_v2', torch.rand(outputSize, inputSize).mul_(2 * stdv).add_(-stdv))
-
-    def _forward(self, v1, v2, forward_type='s'):
-        if forward_type == 's':
-            w_v = self.w_s_v
-            relu = self.relu_s
-            w_v1 = self.w_s_v1
-            w_v2 = self.w_s_v2
-        elif forward_type == 't':
-            w_v = self.w_t_v
-            relu = self.relu_t
-            w_v1 = self.w_t_v1
-            w_v2 = self.w_t_v2
-        return w_v(relu(w_v1(v1)-w_v2(v2)))
+        stdv = 1. / math.sqrt(input_size / 3)
+        self.register_buffer('memory_s', torch.rand(output_size, input_size).mul_(2 * stdv).add_(-stdv))
     
-    def forward(self, v1, v2, y, idx=None):
+    def forward(self, s, t, y, idx=None):
         K = int(self.params[0].item())
         T = self.params[1].item()
         momentum = self.params[2].item()
-        batchSize = v1.size(0)
-        outputSize = self.nLem
-        inputSize = self.inputSize
-
+        batch_size = s.size(0)
+        output_size = self.nLem
+        input_size = self.input_size
+        idx = idx.view(batch_size,batch_size,-1)[:,:,:K]
+        # idx = idx.view(batch_size*batch_size,-1).select(1, 0).copy_(y.tile(y.size(0)).data).transpose(0, 1)
         # original score computation
         if idx is None:
-            idx = self.multinomial.draw(batchSize * batchSize * (K + 1)).view(batchSize * batchSize, -1)
+            idx = self.multinomial.draw(batch_size * batch_size * (K + 1)).view(batch_size * batch_size, -1)
             idx.select(1, 0).copy_(y.tile(y.shape[0]).data)
 
         # sample
-        weight_v2 = torch.index_select(self.memory_v2, 0, idx.view(-1)).detach()
-        weight_v2 = weight_v2.view(batchSize, K + 1, inputSize).transpose(0, 1)
+        neg_s = torch.index_select(self.memory_s, 0, idx.reshape(-1)).detach()
+        neg_s = neg_s.view(batch_size, batch_size, K, input_size)
 
-        # critic
-        outs_m_t = torch.stack([self.h_t(self.m_t(v2, w_v2)) for w_v2 in weight_v2])
-        outs_m_t_s = torch.stack([self.h_t_s(self.m_t_s(v1, w_v2)) for w_v2 in weight_v2])
-
+        # embed
+        debug = False
+        s = self.embed_s(s) # 64,128
+        t = self.embed_t(t) # 64,128
+        m_t_v = self.m_t_v(t) # 64,128
+        m_t_q = self.m_t_q(t) # 64,128
+        if debug:
+            print('m_t_v: ', m_t_v.shape)
+            print('m_t_q: ', m_t_q.shape)
+        m_t_s_v = self.m_t_s_v(t) # 64,128
+        m_t_s_q_pos = self.m_t_s_q(s) # 64,128
+        m_t_s_q_neg = self.m_t_s_q(neg_s) # 64,64,512,128
+        if debug:
+            print('m_t_s_v: ', m_t_s_v.shape)
+            print('m_t_s_q_pos: ', m_t_s_q_pos.shape)
+            print('m_t_s_q_neg: ', m_t_s_q_neg.shape)
+        r_t = self.m_t(F.relu(m_t_v.unsqueeze(0) - m_t_q.unsqueeze(1))) # 64,64,128
+        r_t_s_pos = self.m_t_s(F.relu(m_t_s_v.unsqueeze(0) - m_t_s_q_pos.unsqueeze(1))) # 64,64,128
+        r_t_s_neg = self.m_t_s(F.relu(m_t_s_v.unsqueeze(0).unsqueeze(2) - m_t_s_q_neg)) # 64,64,512,128
+        if debug:
+            print('r_t: ', r_t.shape)
+            print('r_t_s_pos: ', r_t_s_pos.shape)
+            print('r_t_s_neg: ', r_t_s_neg.shape)
+        h_t = self.h_t(r_t, 2) # 64,64,128
+        h_t_s_pos = self.h_t_s(r_t_s_pos, 2) # 64,64,128
+        h_t_s_neg = self.h_t_s(r_t_s_neg, 3) # 64,64,512,128
+        h_t_s = torch.cat([h_t_s_pos.unsqueeze(2), h_t_s_neg], dim=2).view(batch_size, batch_size, K+1, -1)
+        if debug:
+            print('h_t: ', h_t.shape)
+            print('h_t_s_pos: ', h_t_s_pos.shape)
+            print('h_t_s_neg: ', h_t_s_neg.shape)
+            print('h_t_s: ', h_t_s.shape)
 
         # update memory
         with torch.no_grad():
-            ab_pos = torch.index_select(self.memory_v2, 0, y.view(-1))
+            ab_pos = torch.index_select(self.memory_s, 0, y.view(-1))
             ab_pos.mul_(momentum)
-            ab_pos.add_(torch.mul(v2, 1 - momentum))
+            ab_pos.add_(torch.mul(s, 1 - momentum))
             ab_norm = ab_pos.pow(2).sum(1, keepdim=True).pow(0.5)
-            updated_v2 = ab_pos.div(ab_norm)
-            self.memory_v2.index_copy_(0, y, updated_v2)
-        
-        return torch.div(torch.exp(torch.div(torch.sum(torch.mul(outs_m_t, outs_m_t_s), dim=2, keepdim=True), T)), torch.exp(torch.div(1, T)))
+            updated_s = ab_pos.div(ab_norm)
+            self.memory_s.index_copy_(0, y, updated_s)
+        return torch.div(torch.exp(torch.div(torch.sum(torch.mul(h_t.unsqueeze(2), h_t_s), dim=3, keepdim=True), T)), torch.exp(torch.div(1, T))).view(batch_size * batch_size, -1, 1) # 64,64,513,128
+        # return torch.div(torch.exp(torch.div(torch.sum(torch.mul(h_t.unsqueeze(2), h_t_s), dim=2, keepdim=True), T)), torch.exp(torch.div(1, T))) # 64,64,513,128
 
 
 class Synchronize(nn.Module):
@@ -150,10 +175,9 @@ class Embed(nn.Module):
         self.linear = nn.Linear(dim_in, dim_out)
         self.l2norm = Normalize(2)
 
-    def forward(self, x):
-        x = x.view(x.shape[0], -1)
+    def forward(self, x, dim):
         x = self.linear(x)
-        x = self.l2norm(x)
+        x = self.l2norm(x, dim)
         return x
 
 
@@ -163,7 +187,32 @@ class Normalize(nn.Module):
         super(Normalize, self).__init__()
         self.power = power
 
-    def forward(self, x):
-        norm = x.pow(self.power).sum(1, keepdim=True).pow(1. / self.power)
+    def forward(self, x, dim=1):
+        norm = x.pow(self.power).sum(dim, keepdim=True).pow(1. / self.power)
         out = x.div(norm)
         return out
+
+# class nn.Linear(nn.Module):
+#     def __init__(self, inplanes, outplanes):
+#         super(nn.Linear, self).__init__()
+#         self.linear = nn.Linear(inplanes, outplanes)
+    
+#     def forward(self, x):
+#         feature_dim = x.size(-1)
+#         orig_size = x.shape[:-1]
+#         print(orig_size)
+#         batch_size = orig_size.numel()
+#         if batch_size > 512:
+#             result = []
+#             for i in range(0, batch_size, 512):
+#                 x_chunk = x[i:i+512]
+#                 result.append(self.linear(x_chunk))
+#             return torch.cat(result, dim=0)
+#         else:
+#             return self.linear(x.view(batch_size, -1)).view(orig_size, -1)
+
+if __name__ == '__main__':
+    model = nn.Linear(64, 64)
+    x = torch.Tensor(16, 128, 128, 64)
+    x = model(x)
+    print(x.shape)

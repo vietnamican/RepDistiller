@@ -41,7 +41,7 @@ class CRCDLoss(nn.Module):
         """
         outs_m_t, outs_m_t_s = self.relation(f_s, f_t, idx, contrast_idx)
         outs_m_t = torch.cat([self.embed_m_t(out_m_t).unsqueeze(1) for out_m_t in outs_m_t], dim=1)
-        outs_m_t_s = torch.cat([self.embed_m_t(out_m_t_s).unsqueeze(1) for out_m_t_s in outs_m_t_s], dim=1)
+        outs_m_t_s = torch.cat([self.embed_m_t_s(out_m_t_s).unsqueeze(1) for out_m_t_s in outs_m_t_s], dim=1)
         outs = self.contrast(outs_m_t, outs_m_t_s)
         loss = self.criterion(outs)
         return loss
