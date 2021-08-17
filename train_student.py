@@ -93,8 +93,8 @@ def parse_option():
         opt.learning_rate = 0.01
 
     # set the path according to the environment
-    opt.model_path = './save_compare/student_model'
-    opt.tb_path = './save_compare/student_tensorboards'
+    opt.model_path = './save_memory/student_model'
+    opt.tb_path = './save_memory/student_tensorboards'
 
     iterations = opt.lr_decay_epochs.split(',')
     opt.lr_decay_epochs = list([])

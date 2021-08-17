@@ -6,6 +6,7 @@ import math
 class RelationMemory(nn.Module):
     def __init__(self, dim_s, dim_t, input_size, output_size, K, T, momentum=0.5, device='cuda'):
         super(RelationMemory, self).__init__()
+        self.memory = Memory(64, K, input_size, output_size, device)
         self.embed_s = nn.Linear(dim_s, input_size)
         self.embed_t = nn.Linear(dim_t, input_size)
         self.m_t_v = nn.Linear(input_size, input_size)
@@ -27,8 +28,8 @@ class RelationMemory(nn.Module):
         self.multinomial = AliasMethod(self.unigrams)
         self.multinomial.to(device)
         self.register_buffer('params', torch.tensor([K, T, momentum]))
-        stdv = 1. / math.sqrt(input_size / 3)
-        self.register_buffer('memory_s', torch.rand(output_size, input_size).mul_(2 * stdv).add_(-stdv))
+        # stdv = 1. / math.sqrt(input_size / 3)
+        # self.register_buffer('memory_s', torch.rand(output_size, input_size).mul_(2 * stdv).add_(-stdv))
     
     def forward(self, s, t, y, idx=None):
         K = int(self.params[0].item())
@@ -45,7 +46,8 @@ class RelationMemory(nn.Module):
             idx.select(1, 0).copy_(y.tile(y.shape[0]).data)
 
         # sample
-        neg_s = torch.index_select(self.memory_s, 0, idx.reshape(-1)).detach()
+        neg_s = self.memory.dispatch(batch_size, K)
+        # neg_s = torch.index_select(self.memory_s, 0, idx.reshape(-1)).detach()
         neg_s = neg_s.view(batch_size, batch_size, K, input_size)
 
         # embed
@@ -83,15 +85,51 @@ class RelationMemory(nn.Module):
 
         # update memory
         with torch.no_grad():
-            ab_pos = torch.index_select(self.memory_s, 0, y.view(-1))
-            ab_pos.mul_(momentum)
-            ab_pos.add_(torch.mul(s, 1 - momentum))
-            ab_norm = ab_pos.pow(2).sum(1, keepdim=True).pow(0.5)
-            updated_s = ab_pos.div(ab_norm)
-            self.memory_s.index_copy_(0, y, updated_s)
+            self.memory.update(s)
+        # with torch.no_grad():
+        #     ab_pos = torch.index_select(self.memory_s, 0, y.view(-1))
+        #     ab_pos.mul_(momentum)
+        #     ab_pos.add_(torch.mul(s, 1 - momentum))
+        #     ab_norm = ab_pos.pow(2).sum(1, keepdim=True).pow(0.5)
+        #     updated_s = ab_pos.div(ab_norm)
+        #     self.memory_s.index_copy_(0, y, updated_s)
         return torch.div(torch.exp(torch.div(torch.sum(torch.mul(h_t.unsqueeze(2), h_t_s), dim=3, keepdim=True), T)), torch.exp(torch.div(1, T))).view(batch_size * batch_size, -1, 1) # 64,64,513,128
         # return torch.div(torch.exp(torch.div(torch.sum(torch.mul(h_t.unsqueeze(2), h_t_s), dim=2, keepdim=True), T)), torch.exp(torch.div(1, T))) # 64,64,513,128
 
+
+class Memory(object):
+    def __init__(self, batch_size, K, input_size, output_size, device):
+        super().__init__()
+        self.batch_szie = batch_size
+        self.K = K
+        self.num_samples = batch_size * batch_size * K
+        self.queue = torch.Tensor(0, input_size).to(device)
+        self.is_start = False
+        self.input_size = input_size
+        self.output_size = output_size
+        self.device = device
+
+    def dispatch(self, batch_size, K):
+        num_samples = batch_size * batch_size * K
+        if not self.is_start:
+            stdv = 1. / math.sqrt(self.input_size / 3)
+            return torch.rand(num_samples, self.input_size).mul_(2 * stdv).add_(-stdv).to(self.device)
+        else:
+            current_size = self.queue.size(0)
+            if current_size < num_samples:
+                num_tile = num_samples // current_size
+                redundant = num_samples - num_tile * current_size
+                redundant = self.queue[-redundant:] if redundant > 0 else torch.Tensor().to(self.device)
+                return torch.cat([self.queue.tile(num_tile, 1), redundant], dim=0).to(self.device)
+            else: 
+                return self.queue[-num_samples:].to(self.device)
+
+    def update(self, x):
+        with torch.no_grad():
+            self.queue = torch.cat([self.queue, x], dim=0)
+            if self.queue.size(0) > self.num_samples:
+                self.queue = self.queue[-self.num_samples:]
+            self.is_start = True
 
 class Synchronize(nn.Module):
     """
