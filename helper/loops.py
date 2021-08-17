@@ -80,7 +80,11 @@ def train_distill(epoch, train_loader, module_list, criterion_list, optimizer, o
 
     criterion_cls = criterion_list[0]
     criterion_div = criterion_list[1]
-    criterion_kd = criterion_list[2]
+    if opt.distill == 'crd_crcd':
+        criterion_kd_1 = criterion_list[2]
+        criterion_kd_2 = criterion_list[3]
+    else:
+        criterion_kd = criterion_list[2]
 
     model_s = module_list[0]
     model_t = module_list[-1]
@@ -93,7 +97,7 @@ def train_distill(epoch, train_loader, module_list, criterion_list, optimizer, o
 
     end = time.time()
     for idx, data in enumerate(train_loader):
-        if opt.distill in ['crd', 'crcd', 'crcd_simple']:
+        if opt.distill in ['crd', 'crcd', 'crd_crcd', 'crcd_simple']:
             input, target, index, contrast_idx = data
         else:
             input, target, index = data
@@ -104,7 +108,7 @@ def train_distill(epoch, train_loader, module_list, criterion_list, optimizer, o
         input = input.to(opt.device)
         target = target.to(opt.device)
         index = index.to(opt.device)
-        if opt.distill in ['crd', 'crcd', 'crcd_simple']:
+        if opt.distill in ['crd', 'crcd', 'crd_crcd', 'crcd_simple']:
             contrast_idx = contrast_idx.to(opt.device)
 
         # ===================forward=====================
@@ -139,6 +143,10 @@ def train_distill(epoch, train_loader, module_list, criterion_list, optimizer, o
             f_s = feat_s[-1]
             f_t = feat_t[-1]
             loss_kd = criterion_kd(f_s, f_t, index, contrast_idx)
+        elif opt.distill == 'crd_crcd':
+            f_s = feat_s[-1]
+            f_t = feat_t[-1]
+            loss_kd = 0.8*criterion_kd_1(f_s, f_t, index, contrast_idx) + 0.5*criterion_kd_2(f_s, f_t, index, contrast_idx)
         elif opt.distill == 'attention':
             g_s = feat_s[1:-1]
             g_t = feat_t[1:-1]

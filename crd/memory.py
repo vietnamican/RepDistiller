@@ -34,15 +34,15 @@ class ContrastMemory(nn.Module):
         # original score computation
         if idx is None:
             idx = self.multinomial.draw(batchSize * (self.K + 1)).view(batchSize, -1)
-            idx.select(1, 0).copy_(y.data)
+        idx = torch.cat([y.unsqueeze(1), idx], dim=1)
         # sample
         weight_v1 = torch.index_select(self.memory_v1, 0, idx.view(-1)).detach()
-        weight_v1 = weight_v1.view(batchSize, K + 1, inputSize)
+        weight_v1 = weight_v1.view(batchSize, -1, inputSize)
         out_v2 = torch.bmm(weight_v1, v2.view(batchSize, inputSize, 1))
         out_v2 = torch.exp(torch.div(out_v2, T))
         # sample
         weight_v2 = torch.index_select(self.memory_v2, 0, idx.view(-1)).detach()
-        weight_v2 = weight_v2.view(batchSize, K + 1, inputSize)
+        weight_v2 = weight_v2.view(batchSize, -1, inputSize)
         out_v1 = torch.bmm(weight_v2, v1.view(batchSize, inputSize, 1))
         out_v1 = torch.exp(torch.div(out_v1, T))
 

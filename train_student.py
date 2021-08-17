@@ -65,7 +65,7 @@ def parse_option():
 
     # distillation
     parser.add_argument('--distill', type=str, default='kd', choices=['kd', 'hint', 'attention', 'similarity',
-                                                                      'correlation', 'vid', 'crd', 'crcd', 'crcd_simple', 'kdsvd', 'fsp',
+                                                                      'correlation', 'vid', 'crd', 'crcd', 'crd_crcd', 'crcd_simple', 'kdsvd', 'fsp',
                                                                       'rkd', 'pkt', 'abound', 'factor', 'nst'])
     parser.add_argument('--trial', type=str, default='1', help='trial id')
 
@@ -145,8 +145,8 @@ def main():
 
     # dataloader
     if opt.dataset == 'cifar100':
-        if opt.distill in ['crd', 'crcd', 'crcd_simple']:
-            if opt.distill in ['crcd']:
+        if opt.distill in ['crd', 'crcd', 'crcd_simple', 'crd_crcd']:
+            if opt.distill in ['crcd', 'crd_crcd']:
                 train_loader, val_loader, n_data = get_cifar100_dataloaders_sample_no_postive(batch_size=opt.batch_size,
                                                                                num_workers=opt.num_workers,
                                                                                k=opt.nce_k*opt.batch_size,
@@ -215,6 +215,18 @@ def main():
         trainable_list.append(criterion_kd.relation)
         trainable_list.append(criterion_kd.embed_m_t)
         trainable_list.append(criterion_kd.embed_m_t_s)
+    elif opt.distill == 'crd_crcd':
+        opt.s_dim = feat_s[-1].shape[1]
+        opt.t_dim = feat_t[-1].shape[1]
+        opt.n_data = n_data
+        criterion_kd_1 = CRDLoss(opt)
+        module_list.append(criterion_kd_1.embed_s)
+        module_list.append(criterion_kd_1.embed_t)
+        trainable_list.append(criterion_kd_1.embed_s)
+        trainable_list.append(criterion_kd_1.embed_t)
+        criterion_kd_2 = CRCDLoss(opt)
+        module_list.append(criterion_kd_2.relation)
+        trainable_list.append(criterion_kd_2.relation)
     elif opt.distill == 'attention':
         criterion_kd = Attention()
     elif opt.distill == 'nst':
@@ -286,7 +298,11 @@ def main():
     criterion_list = nn.ModuleList([])
     criterion_list.append(criterion_cls)    # classification loss
     criterion_list.append(criterion_div)    # KL divergence loss, original knowledge distillation
-    criterion_list.append(criterion_kd)     # other knowledge distillation loss
+    if opt.distill == 'crd_crcd':
+        criterion_list.append(criterion_kd_1)
+        criterion_list.append(criterion_kd_2)
+    else:
+        criterion_list.append(criterion_kd)     # other knowledge distillation loss
 
     # optimizer
     optimizer = optim.SGD(trainable_list.parameters(),
